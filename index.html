@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Department of Human Services</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .header {
+            background: url('/mnt/data/bg2.png') no-repeat center center;
+            background-size: cover;
+            color: white;
+            padding: 20px 0;
+            text-align: center;
+            position: relative;
+        }
+        .header h1 {
+            color: #0d355a;
+        }
+        .logo-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            align-items: center;
+        }
+        .logo {
+            width: 100px;
+            margin-right: 20px;
+        }
+        .header-links {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+        }
+        .header-links a {
+            color: #0d355a;
+            margin-left: 20px;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .header-links a:hover {
+            text-decoration: underline;
+        }
+        .search-box {
+            margin-top: 10px;
+        }
+        .search-box input[type="text"] {
+            padding: 5px;
+            font-size: 16px;
+        }
+        .login-button {
+            background-color: red;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-left: 20px;
+            border-radius: 12px;
+        }
+        .login-button:hover {
+            background-color: darkred;
+        }
+        .navbar {
+            background-color: #162e51;
+            overflow: hidden;
+            text-align: center;
+            padding: 10px 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .navbar a {
+            color: white;
+            padding: 14px 20px;
+            text-decoration: none;
+            font-size: 16px;
+            display: inline-block;
+            position: relative;
+        }
+        .navbar a:hover {
+            background-color: #4c6a92;
+            color: white;
+        }
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .dropbtn:after {
+            content: '\25BC'; /* Unicode character for down arrow */
+            font-size: 12px;
+            margin-left: 5px;
+        }
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #162e51;
+            min-width: 200px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1;
+        }
+        .dropdown-content a {
+            color: white;
+            padding: 12px 16px;
+            text-decoration: none;
+            display: block;
+            text-align: left;
+        }
+        .dropdown-content a:hover {
+            background-color: #4c6a92;
+        }
+        .dropdown:hover .dropdown-content {
+            display: block;
+        }
+        .dropdown:hover .dropbtn {
+            background-color: #4c6a92;
+        }
+        .hero-image {
+            width: 100%;
+            height: auto;
+            max-height: 30vh;
+        }
+        .content {
+            padding: 20px;
+        }
+        .card-container {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .card {
+            background-color: #e6f0f5;
+            padding: 20px;
+            border-radius: 5px;
+            width: 20%;
+            box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+            transition: 0.3s;
+            margin-bottom: 20px;
+        }
+        .card:hover {
+            box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
+        }
+        .footer {
+            background-color: #686a6c;
+            color: white;
+            padding: 10px 0;
+            text-align: center;
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .footer-column {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .footer a {
+            color: white;
+            margin: 0 10px;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="logo-container">
+       <!-- <img src="healthlogo.png" alt="Department of Health Logo" class="logo">
+        <img src="awslogo.png" alt="AWS Logo" class="logo"> -->
+    </div>
+    <h1>Horizon Department of Human Services</h1>
+    <div class="header-links">
+        <div>
+            <a href="#">Careers</a>
+            <a href="#">Contact</a>
+            <a href="#">About</a>
+            <button class="login-button">Login</button>
+        </div>
+        <div class="search-box">
+            <input type="text" placeholder="Search...">
+        </div>
+    </div>
+</div>
+
+<div class="navbar">
+    <div class="dropdown">
+        <a href="#about-dhs" class="dropbtn">About DHS</a>
+        <div class="dropdown-content">
+            <a href="#">Acronym Glossary</a>
+            <a href="#">American Rescue Plan Act Funding for Wisconsin</a>
+            <a href="#">Business Opportunities</a>
+            <a href="#">Civil Rights</a>
+            <a href="#">Client Rights</a>
+            <a href="#">Contacts by Service Area</a>
+            <a href="#">Divisions and Offices</a>
+            <a href="#">Employee Information</a>
+            <a href="#">File a Complaint or Report Fraud</a>
+            <a href="#">Forms Library</a>
+            <a href="#">Governor Evers' Proposed 2023-2025 Budget</a>
+            <a href="#">Guidance Documents Library</a>
+            <a href="#">HIPAA</a>
+            <a href="#">Memos Library</a>
+            <a href="#">News Releases</a>
+            <a href="#">Newsletter Library</a>
+            <a href="#">Open Records Requests</a>
+            <a href="#">Our Locations</a>
+            <a href="#">Publications Library</a>
+            <a href="#">Service Areas</a>
+            <a href="#">Statutorily Required Reports</a>
+            <a href="#">Statutory Boards, Committees and Councils</a>
+            <a href="#">Vision, Mission, and Values</a>
+            <a href="#">Vital Records</a>
+            <a href="#">Work at DHS: Career Opportunities</a>
+        </div>
+    </div>
+    <div class="dropdown">
+        <a href="#data-statistics" class="dropbtn">Data & Statistics</a>
+        <div class="dropdown-content">
+            <a href="#">Health Statistics</a>
+            <a href="#">Population Data</a>
+            <a href="#">Public Health Data</a>
+        </div>
+    </div>
+    <div class="dropdown">
+        <a href="#diseases-conditions" class="dropbtn">Diseases & Conditions</a>
+        <div class="dropdown-content">
+            <a href="#">Infectious Diseases</a>
+            <a href="#">Chronic Diseases</a>
+            <a href="#">Health Conditions</a>
+        </div>
+    </div>
+    <div class="dropdown">
+        <a href="#health-care-coverage" class="dropbtn">Health Care & Coverage</a>
+        <div class="dropdown-content">
+            <a href="#">Medicaid</a>
+            <a href="#">Medicare</a>
+            <a href="#">Private Insurance</a>
+        </div>
+    </div>
+    <div class="dropdown">
+        <a href="#long-term-care-support" class="dropbtn">Long-Term Care & Support</a>
+        <div class="dropdown-content">
+            <a href="#">Elder Care</a>
+            <a href="#">Disability Services</a>
+            <a href="#">Caregiver Support</a>
+        </div>
+    </div>
+    <div class="dropdown">
+        <a href="#prevention-healthy-living" class="dropbtn">Prevention & Healthy Living</a>
+        <div class="dropdown-content">
+            <a href="#">Healthy Lifestyle Tips</a>
+            <a href="#">Disease Prevention</a>
+            <a href="#">Health Education</a>
+        </div>
+    </div>
+    <div class="dropdown">
+        <a href="#partners-providers" class="dropbtn">Partners & Providers</a>
+        <div class="dropdown-content">
+            <a href="#">Provider Resources</a>
+            <a href="#">Partner Programs</a>
+            <a href="#">Collaboration Opportunities</a>
+        </div>
+    </div>
+    <div class="dropdown">
+        <a href="#certification-licenses-permits" class="dropbtn">Certification, Licenses & Permits</a>
+        <div class="dropdown-content">
+            <a href="#">Professional Licensing</a>
+            <a href="#">Facility Certification</a>
+            <a href="#">Permit Applications</a>
+        </div>
+    </div>
+</div>
+
+<div class="content">
+    <h2>SNAP in State Horizon</h2>
+    <p>SNAP is the largest program in the domestic hunger safety net. The Food and Nutrition Service (FNS) works with state agencies, nutrition educators, and neighborhood and faith-based organizations to ensure that those eligible for nutrition assistance can make informed decisions about applying for the program and can access benefits. SNAP is the federal name for the program. State programs may have different names.</p>
+    <p>Learn more about our SNAP programs by selecting an option below.</p>
+    
+    <div class="card-container">
+        <div class="card">
+            <h4>Children</h4>
+            <p>Explore SNAP programs tailored for children's health and nutrition.</p>
+        </div>
+        <div class="card">
+            <h4>Older Adults</h4>
+            <p>Discover the SNAP services available for older adults.</p>
+        </div>
+        <div class="card">
+            <h4>Adults</h4>
+            <p>Find out more about SNAP programs for adults.</p>
+        </div>
+        <div class="card">
+            <h4>Pregnant People</h4>
+            <p>Learn about SNAP coverage for pregnant individuals.</p>
+        </div>
+        <div class="card">
+            <h4>People with Disabilities</h4>
+            <p>Access information on SNAP services for people with disabilities.</p>
+        </div>
+    </div>
+</div>
+
+<div><script type="text/javascript">
+    (function(w, d, x, id){
+      s=d.createElement('script');
+      s.src='https://dtn7rvxwwlhud.cloudfront.net/amazon-connect-chat-interface-client.js';
+      s.async=1;
+      s.id=id;
+      d.getElementsByTagName('head')[0].appendChild(s);
+      w[x] =  w[x] || function() { (w[x].ac = w[x].ac || []).push(arguments) };
+    })(window, document, 'amazon_connect', '123919c7-8f45-4671-a6e1-3059593bf20d');
+    amazon_connect('styles', { iconType: 'CHAT_VOICE', openChat: { color: '#ffffff', backgroundColor: '#123456' }, closeChat: { color: '#ffffff', backgroundColor: '#123456'} });
+    amazon_connect('snippetId', 'QVFJREFIaWFZYXRVSlpIekdkUUg5YXhZenVQMktKRXNIWTVFQWpBYVErTEdzRnpvZHdFbGVWRWVIZ3RnZ21kU0p0djRYckJNQUFBQWJqQnNCZ2txaGtpRzl3MEJCd2FnWHpCZEFnRUFNRmdHQ1NxR1NJYjNEUUVIQVRBZUJnbGdoa2dCWlFNRUFTNHdFUVFNMFBic2pJQzAzenBMV1N3UEFnRVFnQ3VYOHh3T21RcUVjZ0QrRjYvOUdYRXBoZUh0azBCdmhUa3RKemhMaCt4NFhsOFN0RXVDaWEvTE9HaSs6OnV4aUVsb2NIVjlObXlYSGwwOXJPbGN3VXJkb3ZiS2lOeExMYTJOY21Bd2FhdTRpK0FmNjNXV2NpTEltay9tSjJwZzg3a3hyb1NROW1zaWs1ekNWd3VkeDhlQ3FtYTBOaENIdkI5YTJYQUMxUGgyVzlCU0xQOVc5R2FsZUxLd00ySWdESWFPTVVOems4UGFSSTFXY0FsbExLZHdTeHRxTT0=');
+    amazon_connect('supportedMessagingContentTypes', [ 'text/plain', 'text/markdown', 'application/vnd.amazonaws.connect.message.interactive', 'application/vnd.amazonaws.connect.message.interactive.response' ]);
+  </script>
+</div>
+
+<div class="footer">
+    <div class="footer-column">
+        <a href="#">Horizon Agencies</a>
+        <a href="#">Careers</a>
+        <a href="#">Public Meeting Notices</a>
+        <a href="#">Disclaimer</a>
+        <a href="#">Website Policies</a>
+        <a href="#">Site Feedback</a>
+        <a href="#">Contact Us</a>
+    </div>
+</div>
+
+</body>
+</html>
