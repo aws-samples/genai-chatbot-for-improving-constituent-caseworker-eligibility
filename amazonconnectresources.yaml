@@ -1,0 +1,1082 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Amazon Connect instance CloudFormation template.
+  Creates an Amazon Connect Instance, Contact Flow.
+  Creates an Agent user for calls to be directed to.
+  Creates an Admin user to manage Amazon Connect.
+  Passwords for the Agent and Admin are stored as Secure Strings in AWS Systems Manager Parameter Store.
+  Creates an instance storage config to pipe chat transcripts to an Amazon S3 Bucket
+  with server-side encryption with customer-provided keys (SSE-C)
+  This Amazon S3 Bucket has access logging configured to another Amazon S3 Bucket.
+ 
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment to deploy into
+    AllowedValues: [dev, uat, prod]
+  LexBotID:
+    Description: Provide the Lex Bot ID
+    Type: String
+  LetBotAliasID:
+    Description: Provide the Lex Bot Alias ID
+    Type: String     
+
+Resources:
+
+  PhoneNumber:
+     Type: 'AWS::Connect::PhoneNumber'
+     Properties:
+       TargetArn: !GetAtt AmazonConnectInstance.Arn
+       Description: phone number for medicaid chat instanceh
+       Type: DID
+       CountryCode: US
+       
+  AmazonConnectInstance:
+    Type: AWS::Connect::Instance
+    Properties:
+      Attributes:
+        ContactflowLogs: true
+        InboundCalls: true
+        OutboundCalls: true
+      IdentityManagementType: CONNECT_MANAGED
+      InstanceAlias: !Sub
+        - ${prefix}-${randomString}-${environment}
+        - prefix: demoinstance
+          randomString: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+          environment: !Ref Environment      
+
+  CustomResourceGetSecurityProfileAgent:
+    Type: Custom::S3CustomResource
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionGetSecurityProfile.Arn
+      SecurityProfileName: Agent
+
+  LambdaFunctionGetSecurityProfile:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: Permission to write to CloudWatch logs is part of the managed policy AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: Lambda function does not interact with resources in the VPC and does not handle sensitive data
+          - id: W92
+            reason: This lambda function does not require ReservedConcurrentExecutions
+    Properties:
+      Handler: index.lambda_handler
+      Description: >
+        Get Security Profile ID, ARN
+      Role: !GetAtt GetSecurityProfileRole.Arn
+      Runtime: python3.12
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          INSTANCE_ID: !Ref AmazonConnectInstance
+      Code:
+        ZipFile: |
+          import boto3
+          import logging
+          import os
+          import cfnresponse
+
+          client = boto3.client('connect')
+
+          LOG_LEVEL = os.getenv('LOG_LEVEL')
+          INSTANCE_ID = os.getenv('INSTANCE_ID')
+
+          def lambda_handler(event, context):
+            global log_level
+            log_level = str(LOG_LEVEL).upper()
+            if log_level not in { 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL' }:
+              log_level = 'ERROR'
+            logging.getLogger().setLevel(log_level)
+
+            logging.info(f'Event: {event}')
+
+            request_type = event['RequestType']
+
+            if request_type == 'Delete':
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+
+            if request_type in {'Create', 'Update'}:
+              try:
+                security_profile_name = event['ResourceProperties']['SecurityProfileName']
+
+                marker = None
+
+                while True:
+                  paginator = client.get_paginator('list_security_profiles')
+                  response_iterator = paginator.paginate(
+                    InstanceId=INSTANCE_ID,
+                    PaginationConfig={
+                      'PageSize': 10,
+                      'StartingToken': marker
+                    }
+                  )
+                  for page in response_iterator:
+                    security_profiles = page['SecurityProfileSummaryList']
+                    for security_profile in security_profiles:
+                      if security_profile['Name'] == security_profile_name:
+                        response_data = {
+                          'SecurityProfileId': security_profile['Id'],
+                          'SecurityProfileArn': security_profile['Arn'],
+                        }
+                        cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                        return
+                  try:
+                    marker = response_iterator['Marker']
+                  except Exception as e:
+                    logging.error(e)
+                    cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                    break
+              except Exception as e:
+                logging.error(e)
+                cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                return
+
+  GetSecurityProfileRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: listConnectSecurityProfiles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - connect:ListSecurityProfiles
+              Resource: !Sub arn:${AWS::Partition}:connect:${AWS::Region}:${AWS::AccountId}:instance*
+              Condition:
+                StringEquals:
+                  connect:InstanceId: !GetAtt AmazonConnectInstance.Id
+
+  CustomResourceGetRoutingProfileBasic:
+    Type: Custom::S3CustomResource
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionGetRoutingProfile.Arn
+      RoutingProfileName: Basic Routing Profile
+
+  LambdaFunctionGetRoutingProfile:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: Permission to write to CloudWatch logs is part of the managed policy AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: Lambda function does not interact with resources in the VPC and does not handle sensitive data
+          - id: W92
+            reason: This lambda function does not require ReservedConcurrentExecutions
+    Properties:
+      Handler: index.lambda_handler
+      Description: >
+        Get Routing Profile ID, ARN
+      Role: !GetAtt GetRoutingProfileRole.Arn
+      Runtime: python3.12
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          INSTANCE_ID: !Ref AmazonConnectInstance
+      Code:
+        ZipFile: |
+          import boto3
+          import logging
+          import os
+          import cfnresponse
+
+          client = boto3.client('connect')
+
+          LOG_LEVEL = os.getenv('LOG_LEVEL')
+          INSTANCE_ID = os.getenv('INSTANCE_ID')
+
+          def lambda_handler(event, context):
+            global log_level
+            log_level = str(LOG_LEVEL).upper()
+            if log_level not in { 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL' }:
+              log_level = 'ERROR'
+            logging.getLogger().setLevel(log_level)
+
+            logging.info(f'Event: {event}')
+
+            request_type = event['RequestType']
+
+            if request_type == 'Delete':
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+
+            if request_type in {'Create', 'Update'}:
+              try:
+                routing_profile_name = event['ResourceProperties']['RoutingProfileName']
+
+                marker = None
+
+                while True:
+                  paginator = client.get_paginator('list_routing_profiles')
+                  response_iterator = paginator.paginate(
+                    InstanceId=INSTANCE_ID,
+                    PaginationConfig={
+                      'PageSize': 10,
+                      'StartingToken': marker
+                    }
+                  )
+                  for page in response_iterator:
+                    routing_profiles = page['RoutingProfileSummaryList']
+                    for routing_profile in routing_profiles:
+                      if routing_profile['Name'] == routing_profile_name:
+                        response_data = {
+                          'RoutingProfileId': routing_profile['Id'],
+                          'RoutingProfileArn': routing_profile['Arn'],
+                        }
+                        cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                        return
+                  try:
+                    marker = response_iterator['Marker']
+                  except Exception as e:
+                    logging.error(e)
+                    cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                    break
+              except Exception as e:
+                logging.error(e)
+                cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                return
+
+  GetRoutingProfileRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: listConnectRoutingProfiles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - connect:ListRoutingProfiles
+              Resource: !Sub arn:${AWS::Partition}:connect:${AWS::Region}:${AWS::AccountId}:instance*
+              Condition:
+                StringEquals:
+                  connect:InstanceId: !GetAtt AmazonConnectInstance.Id
+
+  CustomResourceGenerateRandomStringAgent:
+    Type: Custom::S3CustomResource
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionGenerateRandomString.Arn
+      StringLength: 15 # Specify minimum 4, max 60
+      SecurityProfileName: Agent
+
+  LambdaFunctionGenerateRandomString:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: Permission to write to CloudWatch logs is part of the managed policy AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: Lambda function does not interact with resources in the VPC and does not handle sensitive data
+          - id: W92
+            reason: This lambda function does not require ReservedConcurrentExecutions
+    Properties:
+      Handler: index.lambda_handler
+      Description: >
+        Generate random string
+      Role: !GetAtt GenerateRandomStringRole.Arn
+      Runtime: python3.12
+      MemorySize: 128
+      Timeout: 3
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import random
+          import logging
+          import os
+          import cfnresponse
+          import string
+
+          client = boto3.client('ssm')
+
+          LOG_LEVEL = os.getenv('LOG_LEVEL')
+
+          def lambda_handler(event, context):
+            global log_level
+            log_level = str(LOG_LEVEL).upper()
+            if log_level not in { 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL' }:
+              log_level = 'ERROR'
+            logging.getLogger().setLevel(log_level)
+
+            logging.info(f'Event: {event}')
+
+            request_type = event['RequestType']
+
+            if request_type == 'Delete':
+              security_profile_name = event['ResourceProperties']['SecurityProfileName']
+              try:
+                response = client.delete_parameter(
+                  Name=f'amazon-connect-temp-{security_profile_name}-password'
+                )
+
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                return
+              except botocore.exceptions.ClientError as err:
+                if err.response['Error']['Code'] == 'ParameterNotFound':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+                else:
+                  logging.error(err)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {err}'})
+                  return
+              except Exception as e:
+                logging.error(e)
+                cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                return
+
+            if request_type in {'Create', 'Update'}:
+              try:
+                string_length = event['ResourceProperties']['StringLength']
+                security_profile_name = event['ResourceProperties']['SecurityProfileName']
+
+                valid_characters = string.ascii_letters + string.digits + "!@#$%^&*_=-"
+                # First 4 specifies a mix of from each combination
+                random_string = random.SystemRandom().choice(string.ascii_lowercase)
+                random_string += random.SystemRandom().choice(string.ascii_uppercase)
+                random_string += random.SystemRandom().choice(string.digits)
+                random_string += random.SystemRandom().choice('!@#$%^&*_=-')
+
+                for i in range(int(string_length)-4):
+                  random_string += random.SystemRandom().choice(valid_characters)
+
+                response = client.put_parameter(
+                  Name=f'amazon-connect-temp-{security_profile_name}-password',
+                  Description=f'SSM Parameter to store the temporary Amazon Connect {security_profile_name} Password',
+                  Value=random_string,
+                  Type='SecureString',
+                  Overwrite=True,
+                  Tier='Standard'
+                )
+
+                response_data = {
+                  'RandomString': random_string
+                }
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+              except Exception as e:
+                logging.error(e)
+                cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                return
+
+  GenerateRandomStringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: putAndDeleteSSMParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - ssm:DeleteParameter
+              - ssm:PutParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter*
+
+  ConnectUserAgent:
+    Type: AWS::Connect::User
+    Properties:
+      IdentityInfo:
+        FirstName: demo
+        LastName: user
+      PhoneConfig:
+        PhoneType: 'SOFT_PHONE'
+      Username: demouser
+      InstanceArn: !GetAtt AmazonConnectInstance.Arn
+      RoutingProfileArn: !GetAtt CustomResourceGetRoutingProfileBasic.RoutingProfileArn
+      SecurityProfileArns: [!GetAtt CustomResourceGetSecurityProfileAgent.SecurityProfileArn]
+      Password: !GetAtt CustomResourceGenerateRandomStringAgent.RandomString
+
+  CustomResourceGetCustomerQueue:
+    Type: Custom::S3CustomResource
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionGetContactQueue.Arn
+      ContactQueueName: BasicQueue
+      ContactQueueTypes: [STANDARD]
+
+  LambdaFunctionGetContactQueue:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: Permission to write to CloudWatch logs is part of the managed policy AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: Lambda function does not interact with resources in the VPC and does not handle sensitive data
+          - id: W92
+            reason: This lambda function does not require ReservedConcurrentExecutions
+    Properties:
+      Handler: index.lambda_handler
+      Description: >
+        Get Contact Flow ID, ARN
+      Role: !GetAtt GetContactQueueRole.Arn
+      Runtime: python3.12
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          INSTANCE_ID: !Ref AmazonConnectInstance
+      Code:
+        ZipFile: |
+          import boto3
+          import logging
+          import os
+          import cfnresponse
+
+          client = boto3.client('connect')
+
+          LOG_LEVEL = os.getenv('LOG_LEVEL')
+          INSTANCE_ID = os.getenv('INSTANCE_ID')
+
+          def lambda_handler(event, context):
+            global log_level
+            log_level = str(LOG_LEVEL).upper()
+            if log_level not in { 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL' }:
+              log_level = 'ERROR'
+            logging.getLogger().setLevel(log_level)
+
+            logging.info(f'Event: {event}')
+
+            request_type = event['RequestType']
+
+            if request_type == 'Delete':
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              return
+
+            if request_type in {'Create', 'Update'}:
+              try:
+                contact_queue_name = event['ResourceProperties']['ContactQueueName']
+                contact_queue_types = event['ResourceProperties']['ContactQueueTypes']
+                
+                marker = None
+
+                while True:
+                  paginator = client.get_paginator('list_queues')
+                  response_iterator = paginator.paginate(
+                    InstanceId=INSTANCE_ID,
+                    QueueTypes=contact_queue_types,
+                    PaginationConfig={
+                      'PageSize': 10,
+                      'StartingToken': marker
+                    }
+                  )
+                  for page in response_iterator:
+                    contact_queues = page['QueueSummaryList']
+                    for contact_queue in contact_queues:
+                      if contact_queue['Name'] == contact_queue_name:
+                        response_data = {
+                          'ContactQueueId': contact_queue['Id'],
+                          'ContactQueueArn': contact_queue['Arn'],
+                        }
+                        cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                        return
+                  try:
+                    marker = response_iterator['Marker']
+                  except Exception as e:
+                    logging.error(e)
+                    cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                    break
+              except Exception as e:
+                logging.error(e)
+                cfnresponse.send(event, context, cfnresponse.FAILED, {'message': f'ERROR: {e}'})
+                return
+
+  GetContactQueueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: listConnectContactFlows
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - connect:ListQueues
+              Resource: !Sub arn:${AWS::Partition}:connect:${AWS::Region}:${AWS::AccountId}:instance*
+              Condition:
+                StringEquals:
+                  connect:InstanceId: !GetAtt AmazonConnectInstance.Id
+                  
+  Flow:
+    Type: AWS::Connect::ContactFlow
+    Properties:
+      Name: DemochatFlow
+      Description: Demo flow with integration to Lex and Bedrock Knowledgebase
+      InstanceArn: !GetAtt AmazonConnectInstance.Arn
+      Type: CONTACT_FLOW
+      Content: !Sub |
+        {
+           "Version": "2019-10-30",
+           "StartAction": "d91372dd-38b1-4b07-b4a8-c1bbc39cb3db",
+           "Metadata": {
+              "entryPointPosition": {
+                 "x": -175.2,
+                 "y": 40
+              },
+              "ActionMetadata": {
+                 "0299712b-cfeb-40fe-9e65-9493bad9e323": {
+                    "position": {
+                       "x": 1247.2,
+                       "y": 20
+                    }
+                 },
+                 "43540b5a-4cf6-4a7e-a423-72805dec7454": {
+                    "position": {
+                       "x": 1009.6,
+                       "y": -72.8
+                    },
+                    "parameters": {
+                       "QueueId": {
+                          "displayName": "BasicQueue"
+                       }
+                    },
+                    "queue": {
+                       "text": "BasicQueue"
+                    }
+                 },
+                 "5eeadcb8-98a2-46bd-b34e-7157f0cdf1bd": {
+                    "position": {
+                       "x": 635.2,
+                       "y": 476.8
+                    }
+                 },
+                 "1e500556-e4c7-49e8-8559-82c241800624": {
+                    "position": {
+                       "x": 301.6,
+                       "y": 476
+                    }
+                 },
+                 "91105f3b-dd0b-4ecd-9450-4fe159c2bede": {
+                    "position": {
+                       "x": 902.4,
+                       "y": 459.2
+                    }
+                 },
+                 "2e6e4ab3-0d83-4cd0-82fa-ef05797278c6": {
+                    "position": {
+                       "x": 772,
+                       "y": 0.8
+                    }
+                 },
+                 "d91372dd-38b1-4b07-b4a8-c1bbc39cb3db": {
+                    "position": {
+                       "x": 8,
+                       "y": 21.6
+                    }
+                 },
+                 "0120f1fa-d67d-4b4a-8698-646f2e0b596d": {
+                    "position": {
+                       "x": 276.8,
+                       "y": 12.8
+                    },
+                    "dynamicParams": [
+                       
+                    ]
+                 },
+                 "5cf04938-31f2-49e3-a118-86f685a5d99f": {
+                    "position": {
+                       "x": 1064,
+                       "y": 298.4
+                    }
+                 },
+                 "70af26d9-bdf9-4c41-ab94-525e982559aa": {
+                    "position": {
+                       "x": 529.6,
+                       "y": -2.4
+                    },
+                    "parameters": {
+                       "Text": {
+                          "useDynamic": true
+                       },
+                       "LexV2Bot": {
+                          "AliasArn": {
+                             "displayName": "TestBotAlias",
+                             "useLexBotDropdown": true,
+                             "lexV2BotName": "medicaidchatbot"
+                          }
+                       }
+                    },
+                    "useLexBotDropdown": true,
+                    "lexV2BotName": "medicaidchatbot",
+                    "lexV2BotAliasName": "TestBotAlias",
+                    "useDynamic": true,
+                    "conditionMetadata": [
+                       {
+                          "id": "a93cefc4-795d-40d1-a13f-f4b3f8af722a",
+                          "operator": {
+                             "name": "Equals",
+                             "value": "Equals",
+                             "shortDisplay": "="
+                          },
+                          "value": "getAgent"
+                       },
+                       {
+                          "id": "334c27aa-1492-4d28-818e-7ec85250fe4f",
+                          "operator": {
+                             "name": "Equals",
+                             "value": "Equals",
+                             "shortDisplay": "="
+                          },
+                          "value": "FallbackIntent"
+                       },
+                       {
+                          "id": "296557d6-1ad8-4df9-9087-3c59d16832bf",
+                          "operator": {
+                             "name": "Equals",
+                             "value": "Equals",
+                             "shortDisplay": "="
+                          },
+                          "value": "no"
+                       },
+                       {
+                          "id": "48f02a88-53c0-43ca-b790-d8e8c58c6076",
+                          "operator": {
+                             "name": "Equals",
+                             "value": "Equals",
+                             "shortDisplay": "="
+                          },
+                          "value": "knowledgebase-Intent"
+                       }
+                    ]
+                 },
+                 "babab684-8ba6-4225-a0a1-8afc0a2fb310": {
+                    "position": {
+                       "x": 249.6,
+                       "y": 226.4
+                    }
+                 }
+              },
+              "Annotations": [
+                 
+              ],
+              "name": "medicaidchat- main",
+              "description": "",
+              "type": "contactFlow",
+              "status": "PUBLISHED",
+              "hash": {
+                 
+              }
+           },
+           "Actions": [
+              {
+                 "Parameters": {
+                    
+                 },
+                 "Identifier": "0299712b-cfeb-40fe-9e65-9493bad9e323",
+                 "Type": "TransferContactToQueue",
+                 "Transitions": {
+                    "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                    "Errors": [
+                       {
+                          "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                          "ErrorType": "QueueAtCapacity"
+                       },
+                       {
+                          "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    "QueueId": "${CustomResourceGetCustomerQueue.ContactQueueArn}"
+                 },
+                 "Identifier": "43540b5a-4cf6-4a7e-a423-72805dec7454",
+                 "Type": "UpdateContactTargetQueue",
+                 "Transitions": {
+                    "NextAction": "0299712b-cfeb-40fe-9e65-9493bad9e323",
+                    "Errors": [
+                       {
+                          "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    "Text": "Anything else?"
+                 },
+                 "Identifier": "5eeadcb8-98a2-46bd-b34e-7157f0cdf1bd",
+                 "Type": "MessageParticipant",
+                 "Transitions": {
+                    "NextAction": "70af26d9-bdf9-4c41-ab94-525e982559aa",
+                    "Errors": [
+                       {
+                          "NextAction": "70af26d9-bdf9-4c41-ab94-525e982559aa",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    "Text": "sorry could not understand the question. I havent been trained on this question yet. Can I help you with something else?"
+                 },
+                 "Identifier": "1e500556-e4c7-49e8-8559-82c241800624",
+                 "Type": "MessageParticipant",
+                 "Transitions": {
+                    "NextAction": "70af26d9-bdf9-4c41-ab94-525e982559aa",
+                    "Errors": [
+                       {
+                          "NextAction": "70af26d9-bdf9-4c41-ab94-525e982559aa",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    "Text": "sorry we are experiencing system problems. Please wait for the next available agent."
+                 },
+                 "Identifier": "91105f3b-dd0b-4ecd-9450-4fe159c2bede",
+                 "Type": "MessageParticipant",
+                 "Transitions": {
+                    "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                    "Errors": [
+                       {
+                          "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    "Text": "Please hold while I transfer you to an agent."
+                 },
+                 "Identifier": "2e6e4ab3-0d83-4cd0-82fa-ef05797278c6",
+                 "Type": "MessageParticipant",
+                 "Transitions": {
+                    "NextAction": "43540b5a-4cf6-4a7e-a423-72805dec7454",
+                    "Errors": [
+                       {
+                          "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    "FlowLoggingBehavior": "Enabled"
+                 },
+                 "Identifier": "d91372dd-38b1-4b07-b4a8-c1bbc39cb3db",
+                 "Type": "UpdateFlowLoggingBehavior",
+                 "Transitions": {
+                    "NextAction": "0120f1fa-d67d-4b4a-8698-646f2e0b596d"
+                 }
+              },
+              {
+                 "Parameters": {
+                    "Attributes": {
+                       "prompt": "Welcome to the state medicaid agency website. How can we help you?"
+                    },
+                    "TargetContact": "Current"
+                 },
+                 "Identifier": "0120f1fa-d67d-4b4a-8698-646f2e0b596d",
+                 "Type": "UpdateContactAttributes",
+                 "Transitions": {
+                    "NextAction": "70af26d9-bdf9-4c41-ab94-525e982559aa",
+                    "Errors": [
+                       {
+                          "NextAction": "70af26d9-bdf9-4c41-ab94-525e982559aa",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    
+                 },
+                 "Identifier": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                 "Type": "DisconnectParticipant",
+                 "Transitions": {
+                    
+                 }
+              },
+              {
+                 "Parameters": {
+                    "Text": "$.Attributes.prompt",
+                    "LexV2Bot": {
+                       "AliasArn": "arn:aws:connect:${AWS::Region}:${AWS::AccountId}:bot-alias/${LexBotID}/${LetBotAliasID}"
+                    }
+                 },
+                 "Identifier": "70af26d9-bdf9-4c41-ab94-525e982559aa",
+                 "Type": "ConnectParticipantWithLexBot",
+                 "Transitions": {
+                    "NextAction": "91105f3b-dd0b-4ecd-9450-4fe159c2bede",
+                    "Conditions": [
+                       {
+                          "NextAction": "2e6e4ab3-0d83-4cd0-82fa-ef05797278c6",
+                          "Condition": {
+                             "Operator": "Equals",
+                             "Operands": [
+                                "getAgent"
+                             ]
+                          }
+                       },
+                       {
+                          "NextAction": "1e500556-e4c7-49e8-8559-82c241800624",
+                          "Condition": {
+                             "Operator": "Equals",
+                             "Operands": [
+                                "FallbackIntent"
+                             ]
+                          }
+                       },
+                       {
+                          "NextAction": "babab684-8ba6-4225-a0a1-8afc0a2fb310",
+                          "Condition": {
+                             "Operator": "Equals",
+                             "Operands": [
+                                "no"
+                             ]
+                          }
+                       },
+                       {
+                          "NextAction": "5eeadcb8-98a2-46bd-b34e-7157f0cdf1bd",
+                          "Condition": {
+                             "Operator": "Equals",
+                             "Operands": [
+                                "knowledgebase-Intent"
+                             ]
+                          }
+                       }
+                    ],
+                    "Errors": [
+                       {
+                          "NextAction": "5eeadcb8-98a2-46bd-b34e-7157f0cdf1bd",
+                          "ErrorType": "NoMatchingCondition"
+                       },
+                       {
+                          "NextAction": "91105f3b-dd0b-4ecd-9450-4fe159c2bede",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              },
+              {
+                 "Parameters": {
+                    "Text": "Thanks for reaching out today. Have a nice day."
+                 },
+                 "Identifier": "babab684-8ba6-4225-a0a1-8afc0a2fb310",
+                 "Type": "MessageParticipant",
+                 "Transitions": {
+                    "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                    "Errors": [
+                       {
+                          "NextAction": "5cf04938-31f2-49e3-a118-86f685a5d99f",
+                          "ErrorType": "NoMatchingError"
+                       }
+                    ]
+                 }
+              }
+           ]
+        }
+
+  ConnectUserAdmin:
+    Type: AWS::Connect::User
+    Properties:
+      IdentityInfo:
+        FirstName: admin
+        LastName: user
+      PhoneConfig:
+        PhoneType: 'SOFT_PHONE'
+      Username: adminuser
+      InstanceArn: !GetAtt AmazonConnectInstance.Arn
+      RoutingProfileArn: !GetAtt CustomResourceGetRoutingProfileBasic.RoutingProfileArn
+      SecurityProfileArns: [!GetAtt CustomResourceGetSecurityProfileAdmin.SecurityProfileArn]
+      Password: !GetAtt CustomResourceGenerateRandomStringAdmin.RandomString
+
+  CustomResourceGenerateRandomStringAdmin:
+    Type: Custom::S3CustomResource
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionGenerateRandomString.Arn
+      StringLength: 15
+      SecurityProfileName: Admin
+
+  CustomResourceGetSecurityProfileAdmin:
+    Type: Custom::S3CustomResource
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionGetSecurityProfile.Arn
+      SecurityProfileName: Admin
+
+  InstanceStorageConfig:
+    Type: AWS::Connect::InstanceStorageConfig
+    Properties:
+      InstanceArn: !GetAtt AmazonConnectInstance.Arn
+      ResourceType: CHAT_TRANSCRIPTS
+      S3Config:
+        BucketName: !Ref S3BucketForInstanceStorageConfig
+        BucketPrefix: ChatTranscripts
+        EncryptionConfig:
+          EncryptionType: KMS
+          KeyId: !GetAtt KmsKeyForInstanceStorageConfig.Arn
+      StorageType: S3
+
+  S3BucketForInstanceStorageConfig:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: aws:kms
+            KMSMasterKeyID: !GetAtt KmsKeyForInstanceStorageConfig.Arn
+          BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3BucketForAccessLogging
+        LogFilePrefix: access-logs
+
+  S3BucketForInstanceStorageConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketForInstanceStorageConfig
+      PolicyDocument:
+        Statement:
+          - Sid: AllowSSLRequestsOnly
+            Action:
+              - s3:*
+            Effect: Deny
+            Resource:
+              - !GetAtt S3BucketForInstanceStorageConfig.Arn
+              - !Sub ${S3BucketForInstanceStorageConfig.Arn}/*
+            Principal: '*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  KmsKeyForInstanceStorageConfig:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: For S3 Bucket that contains logs from Amazon Connect's Instance Storage Config
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-1
+        Statement:
+          - Sid: Root Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+
+  S3BucketForAccessLogging:
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: This bucket is used for S3 Access Logging for the main instance storage config bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  S3BucketForAccessLoggingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketForAccessLogging
+      PolicyDocument:
+        Statement:
+          - Sid: AllowSSLRequestsOnly
+            Action:
+              - s3:*
+            Effect: Deny
+            Resource:
+              - !GetAtt S3BucketForAccessLogging.Arn
+              - !Sub ${S3BucketForAccessLogging.Arn}/*
+            Principal: '*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: PutObjectFromSourceBucket
+            Action:
+              - s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Resource: !Sub ${S3BucketForAccessLogging.Arn}/*
+            Condition:
+              ArnLike:
+                aws:SourceArn: !GetAtt S3BucketForInstanceStorageConfig.Arn
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
